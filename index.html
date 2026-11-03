@@ -815,6 +815,16 @@ const SND = {
     const g = AC.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.35); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     n.connect(bp).connect(g).connect(dest); n.start(t); n.stop(t + dur + 0.05);
   },
+  // boards giving way: a sharp split, a burst of cracks, the low thump of the impact
+  crack(dest, vol = 0.6) {
+    const t = AC.currentTime, n = oneShot(whiteBuf), hp = AC.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+    const g = envG(t, 0.002, vol, 0.18); n.connect(hp).connect(g).connect(dest); n.start(t, Math.random()); n.stop(t + 0.25);
+    for (let i = 0; i < 14; i++) {
+      const tt = t + 0.02 + Math.random() * 0.35, s = oneShot(whiteBuf), bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1500 + Math.random() * 2500; bp.Q.value = 3;
+      const sg = envG(tt, 0.001, vol * (0.2 + Math.random() * 0.5), 0.03); s.connect(bp).connect(sg).connect(dest); s.start(tt, Math.random()); s.stop(tt + 0.05);
+    }
+    SND.thud(dest, vol * 1.4, 70); SND.creak(dest, vol * 0.3, 0.35);
+  },
   snowStep(dest, vol = 0.12) {
     const t = AC.currentTime, n = oneShot(whiteBuf), bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 0.7;
     const g = AC.createGain(); g.gain.setValueAtTime(0, t);
@@ -1011,6 +1021,73 @@ function makeGhostMaterial(map, keyBlack) {
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
   });
+}
+
+/* ================= core: ghost body ================= */
+// The sprite wrapped on a solid figure: a dense sheet pushed out into a rounded body (front and back),
+// with a rig in the vertex shader: legs swing from the hips, arms from the shoulders, the head shakes.
+// Feet stand at the group's origin; its front faces local +z.
+function makeGhostBody(map, keyBlack, H = 1.95) {
+  const W = H * 0.671;
+  const geo = new THREE.PlaneGeometry(W, H, 28, 48);
+  const shared = {
+    map: { value: map }, uTime: { value: 0 }, uOpacity: { value: 0 }, uGlitch: { value: 0 }, uBright: { value: 1.05 },
+    uKey: { value: keyBlack ? 1 : 0 }, uPhase: { value: 0 }, uRun: { value: 0 }, uScream: { value: 0 }, uDepth: { value: 0.16 },
+  };
+  const vertexShader = `
+    uniform float uTime, uPhase, uRun, uScream, uBack, uDepth; varying vec2 vUv; varying float vShade;
+    void main() {
+      vUv = uv; vec3 p = position; float yN = uv.y, H = ${H.toFixed(3)};
+      float side = uv.x < 0.5 ? -1.0 : 1.0;
+      float across = max(0.0, 1.0 - pow(abs(uv.x - 0.5) / 0.3, 2.0));
+      float thick = uDepth * sqrt(across) * (0.5 + 0.5 * smoothstep(0.08, 0.5, yN)) * (1.0 - 0.35 * smoothstep(0.8, 1.0, yN));
+      float swing = sin(uPhase + (side > 0.0 ? 3.14159 : 0.0));
+      float leg = 1.0 - smoothstep(0.34, 0.44, yN);                 // legs swing about the hips
+      float hipY = (0.44 - 0.5) * H;
+      p.z += swing * (hipY - p.y) * 0.75 * uRun * leg;
+      p.y += max(0.0, -swing) * 0.06 * uRun * leg * (1.0 - yN / 0.44);
+      float arm = smoothstep(0.14, 0.21, abs(uv.x - 0.5)) * smoothstep(0.4, 0.5, yN) * (1.0 - smoothstep(0.75, 0.8, yN));
+      float shoulderY = (0.77 - 0.5) * H;                          // arms swing against the legs
+      p.z -= swing * (shoulderY - p.y) * 0.55 * uRun * arm;
+      float head = smoothstep(0.78, 0.86, yN);
+      p.x += (sin(uTime * 63.0 + yN * 25.0) * 0.006 + sin(uTime * 41.0) * 0.014 * head) * uScream;
+      p.x += sin(uPhase * 2.0) * 0.015 * head * uRun;
+      p.z += thick * (uBack > 0.5 ? -1.0 : 1.0);                   // front bulges out, back the other way
+      p.y += H * 0.5;
+      vShade = 0.72 + 0.28 * across;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }`;
+  const fragmentShader = `
+    uniform sampler2D map; uniform float uTime, uOpacity, uGlitch, uBright, uKey, uBack; varying vec2 vUv; varying float vShade;
+    float hash(float n) { return fract(sin(n) * 43758.5453); }
+    void main() {
+      vec2 uv = vUv;
+      float low = 1.0 - smoothstep(0.0, 0.4, uv.y);
+      uv.x += sin(uv.y * 18.0 + uTime * 2.3) * 0.01 * low;
+      float t = floor(uTime * 18.0), band = floor(uv.y * 42.0);
+      float tear = step(1.0 - uGlitch * 0.55, hash(band * 1.31 + t));
+      uv.x += (hash(band * 7.7 + t) - 0.5) * 0.09 * tear * uGlitch;
+      float split = 0.003 + 0.008 * uGlitch;
+      vec4 tx = texture2D(map, uv);
+      vec3 c = vec3(texture2D(map, uv + vec2(split, 0.0)).r, tx.g, texture2D(map, uv - vec2(split, 0.0)).b);
+      c = pow(c, vec3(2.2));
+      float lum = max(c.r, max(c.g, c.b));
+      float a = mix(tx.a, smoothstep(0.0012, 0.02, lum), uKey);
+      float n = hash(floor(uv.x * 70.0) + floor(uv.y * 90.0) * 13.0 + floor(uTime * 9.0));
+      a *= mix(1.0, smoothstep(0.0, 0.2, uv.y) * (0.55 + 0.45 * n), low);
+      a *= smoothstep(0.0, 0.05, vUv.x) * smoothstep(1.0, 0.95, vUv.x) * smoothstep(1.0, 0.97, vUv.y);
+      c *= vShade * (uBack > 0.5 ? 0.45 : 1.0);                    // her back is the same figure, in shadow
+      float flick = 0.88 + 0.12 * sin(uTime * 37.0) * sin(uTime * 13.0);
+      gl_FragColor = vec4(c * uBright * (1.0 + tear * 0.6), clamp(a * uOpacity * flick, 0.0, 1.0));
+    }`;
+  const g = new THREE.Group();
+  [[0, THREE.FrontSide, 2], [1, THREE.BackSide, 1]].forEach(([back, side, order]) => {
+    const mat = new THREE.ShaderMaterial({ uniforms: Object.assign({ uBack: { value: back } }, shared), vertexShader, fragmentShader, transparent: true, depthWrite: false, side });
+    const m = new THREE.Mesh(geo, mat); m.renderOrder = order; m.frustumCulled = false; g.add(m);
+  });
+  g.rotation.order = 'YXZ';
+  g.userData.u = shared;
+  return g;
 }
 
 /* ================= core: hands (own scene, drawn over the world) ================= */
@@ -1331,30 +1408,73 @@ function buildLobby() {
   const ghostPhoto = ghostSpriteTexture();
   if (ghostPhoto) { figure.geometry = new THREE.PlaneGeometry(1.26, 1.88); figure.material = makeGhostMaterial(ghostPhoto, true); figure.material.uniforms.uBright.value = 0.8; }
 
-  // the operator's ghost, woken by the desk bell
-  const ghost = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.9), new THREE.MeshBasicMaterial({ map: canvasTex(128, 224, (g) => {
+  // the operator's ghost, woken by the desk bell: a solid figure wearing the sprite
+  const ghostMap = ghostPhoto || canvasTex(128, 224, (g) => {
     const gr = g.createRadialGradient(64, 60, 4, 64, 100, 120);
     gr.addColorStop(0, 'rgba(215,228,255,.95)'); gr.addColorStop(0.5, 'rgba(150,175,220,.5)'); gr.addColorStop(1, 'rgba(120,150,200,0)');
     g.fillStyle = gr; g.beginPath(); g.moveTo(64, 10); g.bezierCurveTo(100, 10, 104, 60, 96, 90); g.bezierCurveTo(118, 150, 112, 200, 96, 224);
     g.lineTo(80, 196); g.lineTo(64, 224); g.lineTo(48, 196); g.lineTo(32, 224); g.bezierCurveTo(16, 200, 10, 150, 32, 90); g.bezierCurveTo(24, 60, 28, 10, 64, 10); g.fill();
     g.fillStyle = 'rgba(4,6,12,.9)'; g.beginPath(); g.ellipse(53, 52, 5, 12, 0.15, 0, 7); g.fill(); g.beginPath(); g.ellipse(75, 52, 5, 12, -0.15, 0, 7); g.fill();
     g.beginPath(); g.ellipse(64, 92, 7, 26, 0, 0, 7); g.fill();
-    g.fillStyle = 'rgba(4,6,12,.35)'; for (let i = 0; i < 5; i++) { g.fillRect(40 + i * 11, 120, 3, 60 + i % 2 * 20); }
-    g.strokeStyle = 'rgba(30,40,60,.7)'; g.lineWidth = 3; g.beginPath(); g.arc(64, 44, 34, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
-  }, false), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+  }, false);
+  const ghost = makeGhostBody(ghostMap, !!ghostPhoto);
   ghost.visible = false; scene.add(ghost);
-  ghost.material = ghostPhoto ? makeGhostMaterial(ghostPhoto, true) : makeGhostMaterial(ghost.material.map, false);
-  if (ghostPhoto) ghost.geometry = new THREE.PlaneGeometry(1.2, 1.8);
-  // afterimages that trail behind her when she flies off
-  const trail = [0, 1, 2].map(() => {
-    const m = new THREE.Mesh(ghost.geometry, ghostPhoto ? makeGhostMaterial(ghostPhoto, true) : makeGhostMaterial(ghost.material.uniforms.map.value, false));
-    m.visible = false; scene.add(m); return m;
-  });
-  const trailPos = Array.from({ length: 24 }, () => new THREE.Vector3());
-  let trailHead = 0;
-  const gh = { t: -1 };
-  const ghostPath = [new THREE.Vector3(1.2, 1.75, -4.6), new THREE.Vector3(-3, 3.6, -2), new THREE.Vector3(-7.5, 3.2, 0.5), new THREE.Vector3(-9.5, 7, 0.5)];
-  const ghostCurve = new THREE.CubicBezierCurve3(...ghostPath);
+  const gu = ghost.userData.u;
+  const gh = { t: -1, s: 0, speed: 0, broke: false, lastStep: 0 };
+  // her run: around the end of the desk, across the lobby, through the boards and up the stairs
+  const runPts = [[1.2, -4.6], [2.55, -4.45], [2.75, -2.7], [0.5, -1.6], [-5.8, 0.4], [-6.6, 0.5], [-10.0, 0.5]].map(([x, z]) => new THREE.Vector3(x, 0, z));
+  const runLen = []; let runTotal = 0;
+  for (let i = 0; i < runPts.length - 1; i++) { runLen.push(runPts[i].distanceTo(runPts[i + 1])); runTotal += runLen[i]; }
+  const breakAt = runLen.slice(0, 5).reduce((a, b) => a + b, 0) - 0.15;   // just as she reaches the boards
+  const stairY = x => x > -7.25 ? 0 : Math.min(1.8, Math.ceil((-7.25 - x) / 0.3) * 0.18);
+  function runPoint(s, out, dir) {
+    let i = 0; while (i < runLen.length - 1 && s > runLen[i]) { s -= runLen[i]; i++; }
+    const k = Math.min(1, s / runLen[i]);
+    out.lerpVectors(runPts[i], runPts[i + 1], k); dir.subVectors(runPts[i + 1], runPts[i]).normalize();
+    out.y = stairY(out.x);
+  }
+  const runDir = new THREE.Vector3();
+
+  // broken boards: halves and splinters thrown into the stair hall
+  const debris = [];
+  const plankMat = surface(T.wood, 2, 0.2, { color: 0x9a8670 });
+  function breakBoards() {
+    S.flags.boardsBroken = true;
+    SND.crack(at(-6.9, 1.3, 0.5, sfx, 2), 0.7); S.shakeUntil = S.t + 0.5; flicker(0.6);
+    for (const p of planks) {
+      p.visible = false;
+      const cut = 1.1 + Math.random() * 1.2;   // where along its 3.4 m the plank snaps
+      for (const [len, zc, dirZ] of [[cut, 0.5 - 1.7 + cut / 2, -1], [3.4 - cut, 0.5 - 1.7 + cut + (3.4 - cut) / 2, 1]]) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, len), plankMat);
+        m.position.set(p.position.x, p.position.y, zc); m.rotation.copy(p.rotation); m.castShadow = true; scene.add(m);
+        debris.push({ m, half: 0.09, v: new THREE.Vector3(-(2.5 + Math.random() * 2.5), 1.2 + Math.random() * 2.2, dirZ * (0.6 + Math.random() * 1.6)), w: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 9), rest: false, bounced: 0 });
+      }
+    }
+    for (let i = 0; i < 26; i++) {
+      const len = 0.05 + Math.random() * 0.16, m = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.018, len), plankMat);
+      m.position.set(-6.92, 0.6 + Math.random() * 1.5, -1.0 + Math.random() * 3.0); m.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6); scene.add(m);
+      debris.push({ m, half: 0.01, v: new THREE.Vector3(-(1.5 + Math.random() * 4.5), Math.random() * 3.5, (Math.random() - 0.5) * 5), w: new THREE.Vector3((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30), rest: false, bounced: 2 });
+    }
+  }
+  function updateDebris(dt) {
+    for (const d of debris) {
+      if (d.rest) continue;
+      const m = d.m;
+      d.v.y -= 9.8 * dt;
+      m.position.addScaledVector(d.v, dt);
+      m.rotation.x += d.w.x * dt; m.rotation.y += d.w.y * dt; m.rotation.z += d.w.z * dt;
+      if (m.position.z < -0.95 || m.position.z > 1.95) { m.position.z = Math.max(-0.95, Math.min(1.95, m.position.z)); d.v.z *= -0.4; }
+      if (m.position.x < -10.85) { m.position.x = -10.85; d.v.x *= -0.4; }
+      const floor = stairY(m.position.x) + d.half;
+      if (m.position.y < floor) {
+        m.position.y = floor;
+        if (d.bounced < 2 && d.v.y < -2) SND.thud(at(m.position.x, m.position.y, m.position.z, sfx, 2), 0.35, 95);
+        d.bounced++;
+        d.v.y *= -0.3; d.v.x *= 0.55; d.v.z *= 0.55; d.w.multiplyScalar(0.5);
+        if (d.v.lengthSq() < 0.2) { d.rest = true; m.rotation.x = Math.round(m.rotation.x / Math.PI) * Math.PI; m.rotation.z = 0; }   // settle flat
+      }
+    }
+  }
 
   // lights
   ambientLight(0x1b1f28, 0.42);
@@ -1408,17 +1528,16 @@ function buildLobby() {
     // rule 1: no noise after midnight. The one who keeps that rule answers
     S.flags.bell = true; S.activity += 2; SND.bell(at(1.65, 1.1, -3.3));
     later(0.9, () => {
-      gh.t = 0; ghost.visible = true;
+      Object.assign(gh, { t: 0, s: 0, speed: 0, broke: false, lastStep: 0 }); ghost.visible = true;
       SND.scream(at(1.2, 1.75, -4.6, sfx, 2), 0.55); S.shakeUntil = S.t + 1.1; flicker(1.3);
       sub('«…ТИШЕ!..»', 2.5);
     });
-    later(2.2, () => SND.whoosh(movingAt([1.2, 1.75, -4.6], [-9.5, 7, 0.5], 2.2), 2.2, 0.4));
-    later(5.5, () => { walkSteps([-8, 0.5], [2, -2], 4.6, 8, 0.5, 0.4); sub('Оно улетело наверх, на второй этаж.', 3.5); });
     later(10, () => { SND.bell(at(-2, 5, -2, sfx, 2), 0.22); sub('Сверху отозвался такой же колокольчик.', 4); });
   });
   addI(plane(2.4, 2.8, M.hidden, 0, 1.4, 5.85, Math.PI), 'Входные двери', () => sub('Двери не поддаются. За стеклом метель, хотя час назад небо было чистым.', 4.5));
   addI(plane(3.2, 2.6, M.hidden, -6.85, 1.3, 0.5, Math.PI / 2), () => kb('E', S.phase === 'climb' ? 'Подняться на второй этаж' : 'Лестница'), () => {
     if (S.phase === 'climb') return finish();
+    if (S.flags.boardsBroken) return sub('Доски выломаны изнутри, щепки по всем ступеням. Наверху тихо. Сначала нужно закончить здесь.', 4.5);
     sub('Лестница заколочена. Из щелей тянет холодом и сладким запахом, как от увядших цветов.', 4.5);
   });
   for (const [d, msg] of cDoors) addI(d.mesh, 'Дверь', () => {
@@ -1488,11 +1607,16 @@ function buildLobby() {
     if (S.flags.after) return; S.flags.after = true;
     later(2.5, () => { walkSteps([16, 0], [-8, 0.5], 4.6, 12, 0.58); sub('Наверху кто-то идёт к лестнице.', 4); });
     later(10.5, () => {
+      S.phase = 'climb';
+      if (S.flags.boardsBroken) {   // the ghost already broke through: the way is open, something upstairs answers
+        SND.slam(at(-8, 4.6, 0.5, sfx, 2)); sub('Наверху хлопнула дверь.', 3.5);
+        objective('Путь наверх открыт. Поднимитесь на второй этаж.');
+        return;
+      }
       S.flags.board = true;
       SND.creak(at(-7, 1.5, 0.5, sfx, 2), 0.3, 1.0);
       later(0.9, () => SND.thud(at(-6.8, 0.2, 0.5, sfx, 2), 0.9, 80));
       sub('На лестнице что-то упало.', 3.5);
-      S.phase = 'climb';
       objective('Доска на лестнице упала. Поднимитесь на второй этаж.');
     });
   }
@@ -1552,42 +1676,51 @@ function buildLobby() {
         else if (seen) { fig.watch += dt; if (fig.watch > 1.5) vanish(true); }
         else if (fig.life > fig.maxLife) vanish(false);
       }
-      // the ghost: screams from behind the desk, then flies up the stairwell
+      // the ghost: screams from behind the desk, turns, runs across the lobby, smashes the boards, runs upstairs
       if (gh.t >= 0) {
         gh.t += dt;
-        const u = ghost.material.uniforms;
-        let op, glitch, flying = false;
+        const toPlayer = Math.atan2(p.x - ghost.position.x, p.z - ghost.position.z);
+        let op = 1, glitch = 0.1, lean = 0, yaw = toPlayer;
         if (gh.t < 1.3) {
-          // appears in a burst of tearing, then screams: shudders, swells, the image keeps breaking up
+          // a burst of tearing, then the scream: she shudders and swells, facing you
           op = Math.min(1, gh.t / 0.12);
           glitch = gh.t < 0.2 ? 1 - gh.t * 3 : 0.25 + (Math.random() < 0.12 ? 0.7 : 0);
-          ghost.position.copy(ghostPath[0]).add(tmp.set((Math.random() - 0.5) * 0.035, (Math.random() - 0.5) * 0.035 + Math.sin(gh.t * 6) * 0.02, 0));
-          ghost.scale.set(1 + Math.sin(gh.t * 40) * 0.04 + gh.t * 0.12, 1 + Math.sin(gh.t * 40 + 1) * 0.04 + gh.t * 0.12, 1);
+          runPoint(0, ghost.position, runDir);
+          ghost.position.x += (Math.random() - 0.5) * 0.03; ghost.position.y = 0.04 + Math.sin(gh.t * 6) * 0.02;
+          ghost.scale.setScalar(1 + Math.sin(gh.t * 40) * 0.03 + gh.t * 0.08);
+          gu.uScream.value = 1; gu.uRun.value = 0;
         } else {
-          // flies to the stairwell: stretched by the speed, leaning into the turn, afterimages behind
-          flying = true;
-          const k = Math.min(1, (gh.t - 1.3) / 2.2), e = k * k * (3 - 2 * k);
-          ghostCurve.getPoint(e, ghost.position);
-          const speed = 6 * k * (1 - k);
-          ghost.scale.set(1.15 - k * 0.35 - speed * 0.12, 1.15 - k * 0.35 + speed * 0.25, 1);
-          op = k > 0.75 ? (1 - k) / 0.25 : 1;
-          glitch = 0.15 + speed * 0.25;
-            if (k >= 1) { gh.t = -1; ghost.visible = false; op = 0; flying = false; for (const m of trail) m.visible = false; }
+          // turn away, accelerate, run: legs and arms swing, the body leans into the run
+          const tr = Math.min(1, (gh.t - 1.3) / 0.3);
+          gh.speed = Math.min(4.3, gh.speed + dt * 9 * tr);
+          gh.s += gh.speed * dt;
+          runPoint(gh.s, ghost.position, runDir);
+          const runYaw = Math.atan2(runDir.x, runDir.z);
+          let dy = runYaw - toPlayer; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+          yaw = toPlayer + dy * tr;
+          lean = 0.2 * Math.min(1, gh.speed / 3);
+          gu.uScream.value = Math.max(0, 1 - tr * 2); gu.uRun.value = Math.min(1, gh.speed / 2.5);
+          gu.uPhase.value += dt * (6 + gh.speed * 2.2);
+          ghost.position.y += Math.abs(Math.sin(gu.uPhase.value)) * 0.05 * gu.uRun.value;
+          ghost.scale.setScalar(1.1);
+          glitch = 0.08 + (Math.random() < 0.04 ? 0.8 : 0);
+          // a footfall at every half stride
+          const stride = Math.floor(gu.uPhase.value / Math.PI);
+          if (stride !== gh.lastStep && gu.uRun.value > 0.3) { gh.lastStep = stride; SND.thud(at(ghost.position.x, ghost.position.y, ghost.position.z, sfx, 1.6), 0.28, 85); }
+          if (!gh.broke && gh.s >= breakAt) { gh.broke = true; breakBoards(); glitch = 1; }
+          if (gh.s > runTotal - 1.2) op = Math.max(0, (runTotal - gh.s) / 1.2);   // fades into the dark at the top
+          if (gh.s >= runTotal) {
+            gh.t = -1; ghost.visible = false; op = 0;
+            walkSteps([-9, 0.5], [3, -2], 4.6, 9, 0.42, 0.45);
+            later(1.5, () => sub('Оно убежало наверх, на второй этаж. Доски на лестнице разломаны.', 4));
+          }
         }
-        u.uTime.value = S.t; u.uOpacity.value = op * 0.92; u.uGlitch.value = glitch;
-        ghost.lookAt(p.x, ghost.position.y, p.z);
-        ghost.rotateZ(flying ? -0.25 : 0);
-        trailHead = (trailHead + 1) % trailPos.length; trailPos[trailHead].copy(ghost.position);
-        trail.forEach((m, i) => {
-          m.visible = flying && op > 0;
-          if (!m.visible) return;
-          m.position.copy(trailPos[(trailHead - (i + 1) * 4 + trailPos.length * 4) % trailPos.length]);
-          m.scale.copy(ghost.scale); m.quaternion.copy(ghost.quaternion);
-          const tu = m.material.uniforms; tu.uTime.value = S.t - (i + 1) * 0.07; tu.uOpacity.value = op * 0.32 / (i + 1); tu.uGlitch.value = glitch;
-        });
-        ghostLight.base = 1.6 * op; ghostLight.l.position.copy(ghost.position);
+        ghost.rotation.set(lean, yaw, 0);
+        gu.uTime.value = S.t; gu.uOpacity.value = op * 0.95; gu.uGlitch.value = glitch;
+        ghostLight.base = 1.4 * op; ghostLight.l.position.set(ghost.position.x, ghost.position.y + 1.2, ghost.position.z);
       }
-      if (S.flags.board && st.boardT < 1) { st.boardT = Math.min(1, st.boardT + dt * 1.6); const pl = planks[1]; pl.rotation.x = -0.05 + st.boardT * 1.45; pl.position.y = 1.35 - st.boardT * 1.24; pl.position.x = -6.92 + st.boardT * 0.25; }
+      if (debris.length) updateDebris(dt);
+      if (S.flags.board && st.boardT < 1 && !S.flags.boardsBroken) { st.boardT = Math.min(1, st.boardT + dt * 1.6); const pl = planks[1]; pl.rotation.x = -0.05 + st.boardT * 1.45; pl.position.y = 1.35 - st.boardT * 1.24; pl.position.x = -6.92 + st.boardT * 0.25; }
     },
     emf(p) {
       let v = 0.25 + Math.random() * 0.12 + 0.6 * fall(p.distanceTo(SWB), 0.8);
