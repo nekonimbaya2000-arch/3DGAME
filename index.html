@@ -30,6 +30,16 @@ body{background:var(--void);color:var(--ash);overflow:hidden;font-family:var(--f
 #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.55) 80%,rgba(0,0,0,.92) 100%)}
 #frost{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;background:radial-gradient(ellipse at center,transparent 30%,rgba(170,200,230,.35) 70%,rgba(220,235,250,.75) 100%)}
 #fade{position:fixed;inset:0;background:#000;pointer-events:none;opacity:0;transition:opacity 1.6s ease}
+#cine-black{position:fixed;inset:0;background:#000;pointer-events:none;opacity:0}
+#letterbox::before,#letterbox::after{content:"";position:fixed;left:0;right:0;height:11vh;background:#000;pointer-events:none}
+#letterbox::before{top:0}
+#letterbox::after{bottom:0}
+#caption{position:fixed;left:50%;bottom:calc(13vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(720px,88vw);text-align:center;font-family:var(--f-display);font-size:clamp(17px,2.2vw,22px);line-height:1.5;color:var(--ash);text-shadow:0 2px 6px #000;pointer-events:none;min-height:3em}
+#skip{position:fixed;right:calc(20px + env(safe-area-inset-right,0px));bottom:calc(3.5vh + env(safe-area-inset-bottom,0px));font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--ash-dim);pointer-events:none}
+#cine-letter{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 1.2s;pointer-events:none;padding-inline:16px}
+#cine-letter .sheet{transform:rotate(1.2deg);overflow:visible}
+#cine-letter .stamp{position:absolute;top:18px;right:22px;width:84px;height:84px;border:3px solid rgba(120,40,30,.6);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--f-mono);font-size:12px;color:rgba(120,40,30,.8);transform:rotate(-14deg);text-align:center;line-height:1.25}
+.scene-btn.primary{border-color:var(--lamp);background:rgba(214,166,90,.06)}
 
 .hud{position:fixed;pointer-events:none;font-size:13px;letter-spacing:.04em;text-shadow:0 1px 2px #000}
 #objective{top:calc(18px + env(safe-area-inset-top,0px));left:calc(20px + env(safe-area-inset-left,0px));max-width:min(360px,70vw)}
@@ -107,6 +117,18 @@ h1 em{font-style:italic;color:var(--lamp)}
   <canvas id="devcanvas" width="352" height="192"></canvas>
   <div id="devread"></div>
 </div>
+<div id="cine-black"></div>
+<div id="cine-letter"><div class="sheet"><div class="stamp">ЯЛУГА<br>14.02.88</div><h2>Письмо</h2><div class="body">ГОСТИНИЦА «КЕДРОВАЯ»
+пос. Ялуга, ул. Шахтёрская, 1
+
+Уважаемый товарищ Ильин!
+Просим Вас прибыть 3 ноября для обследования здания. Персонал отказывается оставаться в корпусе после захода солнца. Двери будут открыты. Ваш номер подготовлен.
+
+С уважением,
+администрация</div></div></div>
+<div id="letterbox" hidden></div>
+<div id="caption" hidden></div>
+<div id="skip" hidden>Пробел — пропустить</div>
 <div id="fade"></div>
 
 <div id="start" class="overlay">
@@ -123,6 +145,7 @@ h1 em{font-style:italic;color:var(--lamp)}
       <span><kbd>1</kbd><kbd>2</kbd>ЭМП / термометр</span>
     </div>
     <div class="scenes">
+      <button class="scene-btn primary" type="button" data-scene="prologue"><small>Начало</small><strong>Пролог</strong><span>Дорога на Ялугу, письмо из 1988 года и свет в одном окне. Затем сразу первая сцена.</span></button>
       <button class="scene-btn" type="button" data-scene="lobby"><small>Сцена 1</small><strong>Вестибюль</strong><span>Стойка регистрации и коммутатор, который давно отключён от линии.</span></button>
       <button class="scene-btn" type="button" data-scene="floor2"><small>Сцена 2</small><strong>Второй этаж</strong><span>Номера с первого по четырнадцатый. Лампы в коридоре гаснут по очереди.</span></button>
     </div>
@@ -171,6 +194,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.2;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.autoClear = false;
 
 let scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 60);
@@ -307,7 +331,8 @@ function plane(w, h, mat, x, y, z, ry = 0, rx = 0) {
 function wall(x1, z1, x2, z2, h = 4.2, y0 = 0, wains = true, tex = T.wall) {
   const horiz = Math.abs(z1 - z2) < 1e-6, len = horiz ? Math.abs(x2 - x1) : Math.abs(z2 - z1), th = 0.2;
   const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
-  box(horiz ? len : th, h, horiz ? th : len, cx, y0 + h / 2, cz, surface(tex, len / 1.6, h / 1.6), { occlude: true });
+  // a lintel above a doorway (y0 > 0) must not block the passage under it
+  box(horiz ? len : th, h, horiz ? th : len, cx, y0 + h / 2, cz, surface(tex, len / 1.6, h / 1.6), { occlude: true, solid: y0 === 0 });
   if (wains && y0 === 0) box(horiz ? len : th + 0.06, 1.0, horiz ? th + 0.06 : len, cx, 0.5, cz, surface(T.wood, len / 1.2, 1), { solid: false });
 }
 function floorCeil(w, d, x, z, h, floorMat, rx = 1, rz = 1) {
@@ -492,6 +517,39 @@ const SND = {
   },
   hiss(dest, dur, vol = 0.03) { const t = AC.currentTime, n = oneShot(whiteBuf); n.loop = true; const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 0.5; const g = AC.createGain(); g.gain.setValueAtTime(vol, t); g.gain.setValueAtTime(vol, t + dur - 0.05); g.gain.linearRampToValueAtTime(0, t + dur); n.connect(bp).connect(g).connect(dest); n.start(t); n.stop(t + dur); },
   slam(dest) { SND.thud(dest, 0.9, 90); SND.creak(dest, 0.12, 0.3); },
+  scream(dest, vol = 0.5) {
+    const t = AC.currentTime, out = AC.createGain();
+    out.gain.setValueAtTime(0.0001, t); out.gain.exponentialRampToValueAtTime(vol, t + 0.05); out.gain.setValueAtTime(vol, t + 0.8); out.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    const ws = AC.createWaveShaper(), curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) curve[i] = Math.tanh((i / 128 - 1) * 4);
+    ws.curve = curve;
+    const mix = AC.createGain(); mix.gain.value = 0.5;
+    for (const det of [0, 7, -11]) {
+      const o = AC.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(480 + det, t); o.frequency.exponentialRampToValueAtTime(980 + det, t + 0.25); o.frequency.exponentialRampToValueAtTime(420 + det, t + 1.4);
+      const v = AC.createOscillator(); v.frequency.value = 9; const vg = AC.createGain(); vg.gain.value = 40; v.connect(vg).connect(o.frequency);
+      o.connect(mix); o.start(t); v.start(t); o.stop(t + 1.5); v.stop(t + 1.5);
+    }
+    const n = oneShot(whiteBuf), nb = AC.createBiquadFilter(); nb.type = 'bandpass'; nb.frequency.value = 3000; const ng = AC.createGain(); ng.gain.value = 0.6;
+    n.connect(nb).connect(ng).connect(mix); n.start(t); n.stop(t + 1.5);
+    for (const f of [950, 2600]) { const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 4; mix.connect(bp).connect(ws); }
+    ws.connect(out).connect(dest);
+  },
+  whoosh(dest, dur = 1.8, vol = 0.35) {
+    const t = AC.currentTime, n = oneShot(whiteBuf); n.loop = true;
+    const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.5;
+    bp.frequency.setValueAtTime(300, t); bp.frequency.exponentialRampToValueAtTime(2200, t + dur * 0.4); bp.frequency.exponentialRampToValueAtTime(250, t + dur);
+    const g = AC.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.35); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    n.connect(bp).connect(g).connect(dest); n.start(t); n.stop(t + dur + 0.05);
+  },
+  snowStep(dest, vol = 0.12) {
+    const t = AC.currentTime, n = oneShot(whiteBuf), bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 0.7;
+    const g = AC.createGain(); g.gain.setValueAtTime(0, t);
+    for (let i = 0; i < 9; i++) g.gain.setValueAtTime(vol * Math.random(), t + 0.02 + i * 0.015);
+    g.gain.linearRampToValueAtTime(0, t + 0.2);
+    n.connect(bp).connect(g).connect(dest); n.start(t, Math.random()); n.stop(t + 0.25);
+    SND.thud(dest, vol * 0.4, 50);
+  },
 };
 function silence() { amb.gain.cancelScheduledValues(AC.currentTime); amb.gain.setTargetAtTime(0, AC.currentTime, 0.06); }
 function ambience() { amb.gain.cancelScheduledValues(AC.currentTime); amb.gain.setTargetAtTime(1, AC.currentTime, 1.8); }
@@ -503,6 +561,12 @@ function setListener() {
 // footsteps on another floor, walking from a to b at height y
 function walkSteps(a, b, y, steps = 9, iv = 0.62, vol = 0.45, f = 62) {
   for (let i = 0; i < steps; i++) later(i * iv + Math.random() * 0.05, () => { const k = i / Math.max(1, steps - 1); SND.thud(at(a[0] + (b[0] - a[0]) * k, y, a[1] + (b[1] - a[1]) * k, sfx, 2), vol, f); });
+}
+// a panner that glides from a to b, for sounds that fly past
+function movingAt(a, b, dur) {
+  const p = at(a[0], a[1], a[2], sfx, 1.5);
+  if (p.positionX) { const t = AC.currentTime; ['positionX', 'positionY', 'positionZ'].forEach((k, i) => p[k].linearRampToValueAtTime(b[i], t + dur)); }
+  return p;
 }
 
 /* ================= core: state, queue, notes ================= */
@@ -560,6 +624,75 @@ flash.castShadow = true; flash.shadow.mapSize.set(1024, 1024); flash.shadow.came
 flash.position.set(0.22, -0.18, 0.05); camera.add(flash);
 const flashTarget = new THREE.Object3D(); flashTarget.position.set(0.05, -0.12, -5); camera.add(flashTarget); flash.target = flashTarget;
 const flashLit = () => S.flashOn && !S.flashLost && S.battery > 0 && S.t >= S.blackoutUntil;
+
+/* ================= core: hands (own scene, drawn over the world) ================= */
+const handScene = new THREE.Scene();
+const handRoot = new THREE.Group(); handScene.add(handRoot);
+handScene.add(new THREE.AmbientLight(0x2a2a36, 0.35));
+const handLamp = new THREE.PointLight(0xffe2b8, 0, 2.5, 2); handLamp.position.set(0.1, 0.15, -0.25); handRoot.add(handLamp);
+const skinMat = new THREE.MeshStandardMaterial({ color: 0x7a5a48, roughness: 0.8 });
+const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x1a1714, roughness: 1 });
+function makeHand(side) {
+  const g = new THREE.Group();
+  const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.085, 0.34), sleeveMat); sleeve.position.z = 0.24; g.add(sleeve);
+  const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.07), skinMat); wrist.position.z = 0.04; g.add(wrist);
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.028, 0.095), skinMat); palm.position.z = -0.03; g.add(palm);
+  const fingers = [];
+  for (let i = 0; i < 4; i++) {
+    const pv = new THREE.Group(); pv.position.set(-0.03 + i * 0.02, 0, -0.078); g.add(pv);
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.018, 0.075 - Math.abs(i - 1.5) * 0.008), skinMat); f.position.z = -0.035; pv.add(f);
+    fingers.push(pv);
+  }
+  const thumb = new THREE.Group(); thumb.position.set(side * -0.045, -0.005, -0.02); thumb.rotation.y = side * -0.6; g.add(thumb);
+  const tm = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.06), skinMat); tm.position.z = -0.03; thumb.add(tm);
+  g.userData = { fingers, thumb };
+  handRoot.add(g); return g;
+}
+function curl(h, a) { for (const f of h.userData.fingers) f.rotation.x = -a; h.userData.thumb.rotation.x = -a * 0.5; }
+const handR = makeHand(1), handL = makeHand(-1);
+curl(handR, 1.35);
+const torchMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, metalness: 0.6, roughness: 0.4 });
+const torch = new THREE.Group(); torch.position.set(0, -0.035, -0.06); handR.add(torch);
+const torchBody = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 12), torchMat); torchBody.rotation.x = Math.PI / 2; torch.add(torchBody);
+const torchHead = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.022, 0.05, 12), torchMat); torchHead.rotation.x = Math.PI / 2; torchHead.position.z = -0.12; torch.add(torchHead);
+const HAND_REST_L = new THREE.Vector3(-0.32, -0.62, -0.35), HAND_REACH = new THREE.Vector3(-0.07, -0.15, -0.56), HAND_KNOCK = new THREE.Vector3(-0.05, -0.1, -0.5);
+const HA = { kind: null, t: 0, cb: null, fired: false };
+// grab: reach, close the fingers, act at the moment of contact, pull back. knock: fist, three raps
+function handAct(kind, cb) {
+  if (HA.kind) return;
+  Object.assign(HA, { kind, t: 0, cb, fired: false });
+  if (kind === 'knock') { HA.fired = true; cb(); }
+}
+function updateHands(dt) {
+  handRoot.visible = !!(S.started && !S.ended && SC && !SC.cutscene);
+  if (!handRoot.visible) return;
+  handRoot.position.copy(camera.position); handRoot.quaternion.copy(camera.quaternion);
+  const bx = Math.sin(bob * 0.5) * 0.012, by = Math.abs(Math.cos(bob * 0.5)) * 0.012;
+  handR.visible = !S.flashLost;
+  handR.position.set(0.24 + bx, -0.25 - by, -0.42); handR.rotation.set(0.06, 0.08, 0);
+  handLamp.intensity = flashLit() ? 0.3 : 0.03;
+  let k = 0, c = 0.2, rap = 0;
+  if (HA.kind) {
+    HA.t += dt;
+    if (HA.kind === 'grab') {
+      const u = HA.t / 0.75;
+      k = Math.sin(Math.min(1, u) * Math.PI);
+      c = u > 0.42 ? 1.3 : 0.2;
+      if (!HA.fired && u >= 0.42) { HA.fired = true; HA.cb(); }
+      if (u >= 1) HA.kind = null;
+    } else {
+      const u = HA.t / 0.85;
+      k = Math.min(1, u * 6, (1 - u) * 6); c = 1.55;
+      if (HA.t < 0.62) rap = Math.max(0, Math.sin((HA.t / 0.24) * Math.PI * 2)) * 0.05;
+      if (u >= 1) HA.kind = null;
+    }
+  }
+  const e = k * k * (3 - 2 * k), target = HA.kind === 'knock' ? HAND_KNOCK : HAND_REACH;
+  handL.visible = e > 0.01;
+  handL.position.lerpVectors(HAND_REST_L, target, e); handL.position.z -= rap; handL.position.x -= bx;
+  handL.rotation.set(0.15 * e, -0.15 * e, HA.kind === 'knock' ? -0.4 * e : 0);
+  curl(handL, c);
+}
 
 /* ================= core: world reset ================= */
 let SC = null;
@@ -727,6 +860,22 @@ function buildLobby() {
   const figure = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 1.85), figMat);
   figure.visible = false; scene.add(figure);
 
+  // the operator's ghost, woken by the desk bell
+  const ghost = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.9), new THREE.MeshBasicMaterial({ map: canvasTex(128, 224, (g) => {
+    const gr = g.createRadialGradient(64, 60, 4, 64, 100, 120);
+    gr.addColorStop(0, 'rgba(215,228,255,.95)'); gr.addColorStop(0.5, 'rgba(150,175,220,.5)'); gr.addColorStop(1, 'rgba(120,150,200,0)');
+    g.fillStyle = gr; g.beginPath(); g.moveTo(64, 10); g.bezierCurveTo(100, 10, 104, 60, 96, 90); g.bezierCurveTo(118, 150, 112, 200, 96, 224);
+    g.lineTo(80, 196); g.lineTo(64, 224); g.lineTo(48, 196); g.lineTo(32, 224); g.bezierCurveTo(16, 200, 10, 150, 32, 90); g.bezierCurveTo(24, 60, 28, 10, 64, 10); g.fill();
+    g.fillStyle = 'rgba(4,6,12,.9)'; g.beginPath(); g.ellipse(53, 52, 5, 12, 0.15, 0, 7); g.fill(); g.beginPath(); g.ellipse(75, 52, 5, 12, -0.15, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(64, 92, 7, 26, 0, 0, 7); g.fill();
+    g.fillStyle = 'rgba(4,6,12,.35)'; for (let i = 0; i < 5; i++) { g.fillRect(40 + i * 11, 120, 3, 60 + i % 2 * 20); }
+    g.strokeStyle = 'rgba(30,40,60,.7)'; g.lineWidth = 3; g.beginPath(); g.arc(64, 44, 34, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
+  }, false), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+  ghost.visible = false; scene.add(ghost);
+  const gh = { t: -1 };
+  const ghostPath = [new THREE.Vector3(1.2, 1.75, -4.6), new THREE.Vector3(-3, 3.6, -2), new THREE.Vector3(-7.5, 3.2, 0.5), new THREE.Vector3(-9.5, 7, 0.5)];
+  const ghostCurve = new THREE.CubicBezierCurve3(...ghostPath);
+
   // lights
   ambientLight(0x1b1f28, 0.42);
   pLight(0x6d7fa3, 0.9, 9, 0, 2.4, 5.5);
@@ -734,6 +883,7 @@ function buildLobby() {
   pLight(0x3cff8a, 0.35, 3.5, 0, 2.9, 5.6);
   const deskLamp = pLight(0xffb866, 0, 4.5, 0.95, 1.4, -3.45);
   const jackGlow = pLight(0xff5a2a, 0, 1.6, jackLamp.position.x, jackLamp.position.y, -5.6);
+  const ghostLight = pLight(0x9fc0ff, 0, 5, 0, -10, 0);
 
   // mains hum around the switchboard
   const hum = AC.createOscillator(); hum.type = 'sawtooth'; hum.frequency.value = 50;
@@ -775,8 +925,16 @@ function buildLobby() {
   addI(glassPhoto, 'Рассмотреть фото под стеклом', () => { clue('glass'); showNote('glass'); }, () => st.lampOn);
   addI(bell, 'Позвонить в колокольчик', () => {
     if (S.flags.bell) return sub('Колокольчик не звонит. Язычка внутри больше нет.', 4);
-    S.flags.bell = true; S.activity += 1; SND.bell(at(1.65, 1.1, -3.3));
-    later(2.4, () => { SND.bell(at(-8.5, 5, 0.5, sfx, 2), 0.22); sub('Сверху отозвался такой же колокольчик.', 4); });
+    // rule 1: no noise after midnight. The one who keeps that rule answers
+    S.flags.bell = true; S.activity += 2; SND.bell(at(1.65, 1.1, -3.3));
+    later(0.9, () => {
+      gh.t = 0; ghost.visible = true;
+      SND.scream(at(1.2, 1.75, -4.6, sfx, 2), 0.55); S.shakeUntil = S.t + 1.1; flicker(1.3);
+      sub('«…ТИШЕ!..»', 2.5);
+    });
+    later(2.2, () => SND.whoosh(movingAt([1.2, 1.75, -4.6], [-9.5, 7, 0.5], 2.2), 2.2, 0.4));
+    later(5.5, () => { walkSteps([-8, 0.5], [2, -2], 4.6, 8, 0.5, 0.4); sub('Оно улетело наверх, на второй этаж.', 3.5); });
+    later(10, () => { SND.bell(at(-2, 5, -2, sfx, 2), 0.22); sub('Сверху отозвался такой же колокольчик.', 4); });
   });
   addI(plane(2.4, 2.8, M.hidden, 0, 1.4, 5.85, Math.PI), 'Входные двери', () => sub('Двери не поддаются. За стеклом метель, хотя час назад небо было чистым.', 4.5));
   addI(plane(3.2, 2.6, M.hidden, -6.85, 1.3, 0.5, Math.PI / 2), () => kb('E', S.phase === 'climb' ? 'Подняться на второй этаж' : 'Лестница'), () => {
@@ -894,6 +1052,25 @@ function buildLobby() {
         if (d < 3.0) encounter();
         else if (seen) { fig.watch += dt; if (fig.watch > 1.5) vanish(true); }
         else if (fig.life > fig.maxLife) vanish(false);
+      }
+      // the ghost: screams from behind the desk, then flies up the stairwell
+      if (gh.t >= 0) {
+        gh.t += dt;
+        let op;
+        if (gh.t < 1.3) {
+          op = Math.min(0.8, gh.t / 0.15) * (0.85 + Math.random() * 0.15);
+          ghost.position.copy(ghostPath[0]).add(tmp.set((Math.random() - 0.5) * 0.04, (Math.random() - 0.5) * 0.04, 0));
+          ghost.scale.setScalar(1 + Math.sin(gh.t * 40) * 0.06 + gh.t * 0.15);
+        } else {
+          const k = Math.min(1, (gh.t - 1.3) / 2.2), e = k * k * (3 - 2 * k);
+          ghostCurve.getPoint(e, ghost.position);
+          ghost.scale.setScalar(1.2 - k * 0.4);
+          op = 0.8 * (k > 0.75 ? (1 - k) / 0.25 : 1);
+          if (k >= 1) { gh.t = -1; ghost.visible = false; op = 0; }
+        }
+        ghost.material.opacity = op;
+        ghost.lookAt(p.x, ghost.position.y, p.z);
+        ghostLight.base = 1.6 * op; ghostLight.l.position.copy(ghost.position);
       }
       if (S.flags.board && st.boardT < 1) { st.boardT = Math.min(1, st.boardT + dt * 1.6); const pl = planks[1]; pl.rotation.x = -0.05 + st.boardT * 1.45; pl.position.y = 1.35 - st.boardT * 1.24; pl.position.x = -6.92 + st.boardT * 0.25; }
     },
@@ -1313,8 +1490,190 @@ function buildFloor2() {
   };
 }
 
+/* ================= PROLOGUE: cutscene ================= */
+function buildPrologue() {
+  scene.background = new THREE.Color(0x0b0e14);
+  scene.fog = new THREE.FogExp2(0x0b0e14, 0.03);
+  const snowT = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#8d94a0'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 3000; i++) { const v = 130 + rnd() * 60; g.fillStyle = `rgba(${v},${v + 5},${v + 15},.5)`; g.fillRect(rnd() * w, rnd() * h, 2, 2); }
+  });
+  plane(500, 500, surface(snowT, 60, 60, { roughness: 1 }), 0, 0, 0, 0, -Math.PI / 2);
+  const roadT = canvasTex(128, 256, (g, w, h) => {
+    g.fillStyle = '#5a5e66'; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(30,32,36,.55)'; g.fillRect(28, 0, 14, h); g.fillRect(w - 42, 0, 14, h);
+    for (let i = 0; i < 900; i++) { g.fillStyle = 'rgba(210,215,225,.3)'; g.fillRect(rnd() * w, rnd() * h, 2, 2); }
+  });
+  plane(6, 200, surface(roadT, 1, 40, { roughness: 1 }), 1.5, 0.02, 40, 0, -Math.PI / 2);
+  // taiga
+  const treeMat = new THREE.MeshStandardMaterial({ color: 0x141a16, roughness: 1 }), coneG = new THREE.ConeGeometry(1.4, 6, 7);
+  for (let i = 0; i < 200; i++) {
+    const side = rnd() < 0.5 ? -1 : 1, x = 1.5 + side * (6 + rnd() * 50), z = -70 + rnd() * 210;
+    if (z < -25 && Math.abs(x) < 22) continue;
+    const s = 0.7 + rnd() * 0.9, t = new THREE.Mesh(coneG, treeMat); t.scale.set(s, s * (0.9 + rnd() * 0.5), s); t.position.set(x, 3 * t.scale.y, z); scene.add(t);
+  }
+  // the telephone line, and the pole that fell
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x2a2219, roughness: 1 });
+  for (let z = 132; z > 30; z -= 28) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 7, 6), poleMat); p.position.set(6, 3.5, z); scene.add(p);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.08, 0.08), poleMat); bar.position.set(6, 6.6, z); scene.add(bar);
+  }
+  const fallen = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 7, 6), poleMat); fallen.rotation.set(0.35, 0, Math.PI / 2 - 0.12); fallen.position.set(5.2, 0.35, 18); scene.add(fallen);
+  const fallenBar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 1.2), poleMat); fallenBar.position.set(8.2, 0.5, 17); scene.add(fallenBar);
+  // the hotel
+  const facadeT = canvasTex(256, 128, (g, w, h) => { g.fillStyle = '#3a3833'; g.fillRect(0, 0, w, h); stains(g, w, h, 14, '15,12,10'); grime(g, w, h, 2500); for (let y = 0; y < h; y += 8) { g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(0, y, w, 1); } });
+  box(26, 11, 9, 0, 5.5, -44, surface(facadeT, 4, 2), { solid: false });
+  box(27, 0.5, 10, 0, 11.25, -44, M.dark, { solid: false });
+  box(5, 0.4, 3, 0, 0.2, -38, M.dark, { solid: false });
+  box(5.4, 0.25, 3.4, 0, 3.4, -38, M.dark, { solid: false });
+  for (const x of [-2.3, 2.3]) box(0.25, 3.2, 0.25, x, 1.8, -36.6, surface(T.ceil, 1, 2), { solid: false });
+  plane(2.1, 2.6, new THREE.MeshBasicMaterial({ color: 0x050403 }), 0, 1.3, -39.5);
+  const doorL = new THREE.Group(); doorL.position.set(-1.0, 1.25, -39.42); scene.add(doorL);
+  const dl = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.5, 0.06), surface(T.wood, 1, 2)); dl.position.x = 0.5; doorL.add(dl);
+  const doorR = new THREE.Group(); doorR.position.set(1.0, 1.25, -39.42); scene.add(doorR);
+  const dr = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.5, 0.06), surface(T.wood, 1, 2)); dr.position.x = -0.5; doorR.add(dr);
+  const wins = [];
+  for (let f = 0; f < 3; f++) for (let c = 0; c < 9; c++) {
+    if (f === 0 && c >= 3 && c <= 5) continue;
+    const m = new THREE.MeshBasicMaterial({ color: 0x030405 });
+    plane(1.1, 1.5, m, -11 + c * 2.75, 2.2 + f * 3.3, -39.47);
+    wins.push({ m, f, c });
+  }
+  const win9 = wins.find(w => w.f === 1 && w.c === 6);
+  const childMat = new THREE.MeshBasicMaterial({ map: canvasTex(64, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h); g.fillStyle = '#000';
+    g.beginPath(); g.arc(32, 26, 11, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(20, 40); g.lineTo(44, 40); g.lineTo(50, 128); g.lineTo(14, 128); g.closePath(); g.fill();
+  }, false), transparent: true, alphaTest: 0.3, fog: false });
+  const child = plane(0.34, 0.68, childMat, 5.6, 5.3, -39.44);
+  plane(8, 1.1, new THREE.MeshStandardMaterial({ map: canvasTex(512, 72, (g, w, h) => { g.clearRect(0, 0, w, h); g.fillStyle = '#9a958a'; g.font = 'bold 50px serif'; g.textAlign = 'center'; g.fillText('ГОСТИНИЦА «КЕДРОВАЯ»', w / 2, 54); }, false), transparent: true, alphaTest: 0.2 }), 0, 12.1, -39.4);
+
+  // light
+  const hemi = new THREE.HemisphereLight(0x55657f, 0x15161c, 0.6); scene.add(hemi); lights.push({ l: hemi, base: 0.6, ambient: true });
+  const winGlow = pLight(0xd99b4a, 0, 9, 5.5, 5.5, -38.3);
+  const heads = [-0.55, 0.55].map(dx => {
+    const l = new THREE.SpotLight(0xe8eeff, 0, 45, 0.36, 0.5, 1.2), tg = new THREE.Object3D(); scene.add(l, tg); l.target = tg;
+    const o = { l, base: 0 }; lights.push(o); return { o, tg, dx };
+  });
+
+  // snow
+  const N = 2600, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) { pos[i * 3] = (Math.random() - 0.5) * 40; pos[i * 3 + 1] = Math.random() * 14; pos[i * 3 + 2] = (Math.random() - 0.5) * 40; }
+  const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const flakeDot = canvasTex(32, 32, (g) => { const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 32, 32); }, false);
+  const snow = new THREE.Points(sg, new THREE.PointsMaterial({ map: flakeDot, color: 0xdfe6f2, size: 0.06, transparent: true, opacity: 0.85, depthWrite: false }));
+  snow.frustumCulled = false; scene.add(snow);
+  let fallV = 1.6, windV = 1.2;
+
+  // sound: engine, radio dial tone through static
+  const engG = AC.createGain(); engG.gain.value = 0; engG.connect(sfx);
+  const engLp = AC.createBiquadFilter(); engLp.frequency.value = 220; engLp.connect(engG);
+  for (const f of [42, 84.5]) { const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(engLp); o.start(); loops.push(o); }
+  const radioG = AC.createGain(); radioG.gain.value = 0; const radioBp = AC.createBiquadFilter(); radioBp.type = 'bandpass'; radioBp.frequency.value = 1200; radioBp.Q.value = 0.6;
+  radioBp.connect(radioG).connect(sfx);
+  const tone = AC.createOscillator(); tone.frequency.value = 425; const toneG = AC.createGain(); toneG.gain.value = 0.35; tone.connect(toneG).connect(radioBp); tone.start(); loops.push(tone);
+  const rs = src(whiteBuf), rsG = AC.createGain(); rsG.gain.value = 0.5; rs.connect(rsG).connect(radioBp); rs.start(); loops.push(rs);
+  const ramp = (g, v, tc = 0.4) => g.gain.setTargetAtTime(v, AC.currentTime, tc);
+
+  // timeline
+  const cap = { text: '', shown: 0 };
+  const caption = text => { cap.text = text; cap.shown = 0; };
+  const capEl = $('#caption');
+  const lines = [
+    [0.8, '3 ноября. Трасса на посёлок Ялуга.'],
+    [6, 'Связь пропала на сороковом километре. Радио ловит только длинный гудок.'],
+    [10.5, 'Гостиницу «Кедровая» закрыли в девяносто первом. Посёлок расселили через год.'],
+    [15.5, 'Столб лежал поперёк кювета. Провода уходили под снег.'],
+    [21, ''],
+    [24.5, 'Письмо отправили в феврале 1988 года. В мой почтовый ящик оно попало неделю назад.'],
+    [29.5, 'Дорогу замело за три километра до посёлка. Дальше я шёл пешком.'],
+    [35, 'Свет горел в одном окне. На втором этаже.'],
+    [40.3, 'Февраль 1988 года. Метель шла девять дней.'],
+    [44.5, 'Двадцать три постояльца. Связи нет. Угля на двое суток.'],
+    [49.5, 'Двери были открыты. Как и обещали.'],
+  ];
+  for (const [t, txt] of lines) later(t, () => caption(txt));
+  later(0.2, () => { ramp(engG, 0.1, 1); ramp(radioG, 0.05, 1); });
+  later(15, () => { ramp(radioG, 0, 0.3); ramp(engG, 0.05, 0.5); });
+  later(21, () => { ramp(engG, 0, 0.15); SND.thud(sfx, 0.3, 60); $('#cine-letter').style.opacity = 1; });
+  later(28.4, () => { $('#cine-letter').style.opacity = 0; });
+  later(29.2, () => SND.thud(at(1.5, 1, -2, sfx, 2), 0.5, 80));
+  for (let t = 30; t < 39.5; t += 0.62) later(t, () => SND.snowStep(sfx, 0.1));
+  later(36, () => SND.hum(at(5.5, 5.5, -39, sfx, 4), 6, 0.04));
+  later(40, () => { for (const w of wins) w.m.color.setHex(0xc89048); fallV = 5; windV = 5; canvas.style.filter = 'sepia(.85) contrast(1.15) brightness(.9)'; });
+  wins.filter(w => w !== win9).sort((a, b) => b.f - a.f || a.c - b.c).forEach((w, i) => later(42.4 + i * 0.22, () => { w.m.color.setHex(0x030405); if (i % 4 === 0) SND.pop(at(-11 + w.c * 2.75, 2 + w.f * 3.3, -39, sfx, 6)); }));
+  later(46, () => SND.ring(at(0, 3, -40, sfx, 6), 1.2));
+  later(49, () => { canvas.style.filter = ''; renderer.toneMappingExposure = 1.2; fallV = 1.6; windV = 1.2; win9.m.color.setHex(0xd99b4a); });
+  later(51.5, () => { SND.creak(at(0, 1.3, -39.4, sfx, 2), 0.3, 2.2); });
+  later(57.5, () => launch('lobby'));
+
+  const look = new THREE.Vector3(), from = new THREE.Vector3(), lerp = (a, b, k) => a + (b - a) * k;
+  const ease = k => k * k * (3 - 2 * k);
+  return {
+    id: 'prologue', cutscene: true,
+    start() { camera.position.set(1.5, 1.25, 75); camera.lookAt(1.5, 1.1, 55); win9.m.color.setHex(0xd99b4a); winGlow.base = 0.9; },
+    skip() { launch('lobby'); },
+    update(dt) {
+      const t = S.t;
+      let headOn = 0;
+      if (t < 15) {
+        const k = Math.max(0, (t - 5) / 10);
+        from.set(1.5 + Math.sin(t * 0.7) * 0.04, 1.25 + Math.sin(t * 9) * 0.008, 75 - k * 30);
+        look.set(1.5 + Math.sin(t * 0.3) * 0.3, 1.1, from.z - 20); headOn = 3;
+      } else if (t < 29) {
+        const k = ease(Math.min(1, (t - 15) / 6));
+        from.set(2.2, 1.45, 25.5 - k * 1.5);
+        look.set(lerp(3.5, 5.6, k), lerp(1.0, 0.4, k), lerp(14, 18.5, k)); headOn = 3;
+      } else if (t < 40) {
+        const k = ease((t - 29) / 11);
+        from.set(0.3 + Math.sin(t * 1.6) * 0.03, 1.5 + Math.abs(Math.sin(t * 5)) * 0.02, -6 - k * 14);
+        look.set(lerp(0, 5.5, k), lerp(4, 5.5, k), -39.5);
+      } else if (t < 49) {
+        from.set(-2 + (t - 40) * 0.05, 2.2, -16);
+        look.set(1, 5, -40);
+        renderer.toneMappingExposure = 1.0 + Math.random() * 0.25;
+      } else {
+        const k = ease(Math.min(1, (t - 49) / 5));
+        from.set(0, 1.6, lerp(-29, -36.6, k));
+        look.set(0, 1.6, -45);
+        const dk = ease(Math.min(1, Math.max(0, (t - 51.5) / 2.5)));
+        doorL.rotation.y = -1.2 * dk; doorR.rotation.y = 1.2 * dk;
+      }
+      camera.position.copy(from); camera.lookAt(look);
+      child.visible = t < 40 || t > 49;
+      winGlow.base = win9.m.color.getHex() === 0xd99b4a ? 0.9 : 0;
+      // headlights ride with the car
+      const dir = look.clone().sub(from).normalize();
+      for (const h of heads) {
+        h.o.base = headOn;
+        h.o.l.position.set(from.x + h.dx, 0.8, from.z - 0.5);
+        h.tg.position.set(from.x + h.dx + dir.x * 20, 0.2, from.z + dir.z * 20);
+      }
+      // caption typewriter
+      if (cap.shown < cap.text.length) cap.shown = Math.min(cap.text.length, cap.shown + dt * 38);
+      capEl.textContent = cap.text.slice(0, Math.floor(cap.shown));
+      // black dips between shots
+      let b = t < 4 ? 1 : t < 5 ? 5 - t : 0;
+      for (const cut of [15, 21, 29, 40, 49]) { const d = Math.abs(t - cut); if (d < 0.6) b = Math.max(b, 1 - d / 0.6); }
+      if (t > 21 && t < 29) b = 1;
+      if (t > 55) b = Math.min(1, (t - 55) / 1.5);
+      $('#cine-black').style.opacity = b;
+      // snow drifts around the camera
+      const a = sg.attributes.position.array, cp = camera.position;
+      for (let i = 0; i < N; i++) {
+        let x = a[i * 3] + windV * dt * (0.7 + (i % 5) * 0.1), y = a[i * 3 + 1] - fallV * dt * (0.8 + (i % 7) * 0.05), z = a[i * 3 + 2];
+        if (y < 0) y += 14;
+        if (x - cp.x > 20) x -= 40; else if (x - cp.x < -20) x += 40;
+        if (z - cp.z > 20) z -= 40; else if (z - cp.z < -20) z += 40;
+        a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z;
+      }
+      sg.attributes.position.needsUpdate = true;
+    },
+  };
+}
+
 const actLabel = a => a <= 1 ? 'Тихо' : a <= 3 ? 'Беспокойно' : 'Враждебно';
-const BUILDERS = { lobby: buildLobby, floor2: buildFloor2 };
+const BUILDERS = { prologue: buildPrologue, lobby: buildLobby, floor2: buildFloor2 };
 
 /* ================= core: input ================= */
 const keys = {};
@@ -1322,17 +1681,18 @@ let yaw = Math.PI, pitch = 0, lockSupported = 'requestPointerLock' in canvas, fo
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (!S.started || S.ended) return;
+  if (SC.cutscene) { if (e.code === 'Space' || e.code === 'Escape' || e.code === 'Enter') { e.preventDefault(); SC.skip(); } return; }
   if (noteOpen) { if (e.code === 'KeyE' || e.code === 'Escape' || e.code === 'Space') { e.preventDefault(); closeNote(); } return; }
   if (S.paused) return;
   if (e.code === 'KeyF') { if (S.flashLost) sub('Фонаря у вас больше нет.', 2.5); else { S.flashOn = !S.flashOn; SND.click(); } }
   const k = { KeyE: 'E', KeyQ: 'Q', KeyR: 'R' }[e.code];
-  if (k && focus && focus.on[k]) focus.on[k]();
+  if (k && focus && focus.on[k] && !HA.kind) handAct(k === 'Q' ? 'knock' : 'grab', focus.on[k]);
   if ((e.code === 'Digit1' || e.code === 'Digit2') && S.have) { const d = e.code === 'Digit1' ? 1 : 2; S.device = S.device === d ? 0 : d; SND.click(); }
   if (SC.key) SC.key(e.code);
   if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
-canvas.addEventListener('mousedown', () => { if (S.started && !noteOpen && !S.ended) requestLock(); });
+canvas.addEventListener('mousedown', () => { if (S.started && !noteOpen && !S.ended && !SC.cutscene) requestLock(); });
 $('#resume').addEventListener('click', () => { $('#resume').hidden = true; requestLock(); });
 function requestLock() {
   if (!lockSupported) return;
@@ -1341,7 +1701,7 @@ function requestLock() {
 document.addEventListener('pointerlockerror', () => { lockSupported = false; $('#resume').hidden = true; });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) { $('#resume').hidden = true; S.paused = noteOpen; }
-  else if (S.started && !noteOpen && !S.ended && lockSupported) { $('#resume').hidden = false; S.paused = true; }
+  else if (S.started && !noteOpen && !S.ended && lockSupported && !SC.cutscene) { $('#resume').hidden = false; S.paused = true; }
 });
 addEventListener('mousemove', e => {
   if (!S.started || noteOpen || S.ended) return;
@@ -1358,14 +1718,20 @@ function launch(id) {
   initAudio(); ambience();
   resetWorld();
   SC = BUILDERS[id]();
-  ['#start', '#end'].forEach(s => { $(s).hidden = true; });
-  ['#objective', '#cross', '#controls'].forEach(s => { $(s).hidden = false; });
-  $('#kit').hidden = !SC.battery;
-  $('#controls').innerHTML = SC.controls; $('#controls').style.opacity = 1;
+  const cine = !!SC.cutscene;
+  ['#start', '#end', '#resume', '#note'].forEach(s => { $(s).hidden = true; });
+  noteOpen = false;
+  ['#objective', '#cross', '#controls'].forEach(s => { $(s).hidden = cine; });
+  ['#letterbox', '#caption', '#skip'].forEach(s => { $(s).hidden = !cine; });
+  $('#caption').textContent = ''; $('#cine-letter').style.opacity = 0; $('#cine-black').style.opacity = cine ? 1 : 0;
+  canvas.style.filter = ''; renderer.toneMappingExposure = 1.2;
+  $('#kit').hidden = cine || !SC.battery;
+  $('#device').hidden = true; $('#prompt').style.opacity = 0;
+  if (!cine) { $('#controls').innerHTML = SC.controls; $('#controls').style.opacity = 1; }
   $('#fade').style.opacity = 0; $('#frost').style.opacity = 0;
   S.started = true; S.paused = false;
   SC.start();
-  requestLock();
+  if (!cine) requestLock();
   clearTimeout(controlsTimer); controlsTimer = setTimeout(() => { $('#controls').style.opacity = 0; }, 25000);
 }
 document.querySelectorAll('[data-scene]').forEach(b => b.addEventListener('click', () => launch(b.dataset.scene)));
@@ -1391,7 +1757,7 @@ function finish() {
 }
 
 /* ================= core: movement & collision ================= */
-const R = 0.28;
+const R = 0.22;
 function blocked(x, z) { for (const c of colliders) if (!c.off && x > c.minX - R && x < c.maxX + R && z > c.minZ - R && z < c.maxZ + R) return true; return false; }
 let stepAcc = 0, bob = 0;
 function move(dt) {
@@ -1464,6 +1830,13 @@ let frame = 0, last = performance.now(), kitT = 0;
 function update(dt) {
   S.t += dt;
   runQueue();
+  if (SC.cutscene) {
+    SC.update(dt);
+    for (const o of lights) o.l.intensity = o.base;
+    flash.intensity = 0; staticGain.gain.value = 0;
+    setListener();
+    return;
+  }
   move(dt);
   const p = camera.position;
   let sx = 0, sy = 0;
@@ -1508,8 +1881,11 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (S.started && !S.paused && !S.ended) update(dt);
   if (S.started) drawDevice(dt);
+  updateHands(dt);
   if ((frame++ & 1) === 0) grain();
+  renderer.clear();
   renderer.render(scene, camera);
+  if (handRoot.visible) { renderer.clearDepth(); renderer.render(handScene, camera); }
   requestAnimationFrame(loop);
 }
 camera.position.set(0, 1.65, 0);
