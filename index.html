@@ -972,31 +972,94 @@ const beam = (() => {
 /* ================= core: hands (own scene, drawn over the world) ================= */
 const handScene = new THREE.Scene();
 const handRoot = new THREE.Group(); handScene.add(handRoot);
-handScene.add(new THREE.AmbientLight(0x2a2a36, 0.35));
+handScene.add(new THREE.HemisphereLight(0x9a8c80, 0x1a1410, 0.45));
 const handLamp = new THREE.PointLight(0xffe2b8, 0, 2.5, 2); handLamp.position.set(0.1, 0.15, -0.25); handRoot.add(handLamp);
-const skinMat = new THREE.MeshStandardMaterial({ color: 0x4a3328, roughness: 0.8 });
-const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x0e0c0a, roughness: 1 });
-function makeHand(side) {
-  const g = new THREE.Group();
-  const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.085, 0.34), sleeveMat); sleeve.position.z = 0.24; g.add(sleeve);
-  const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.07), skinMat); wrist.position.z = 0.04; g.add(wrist);
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.028, 0.095), skinMat); palm.position.z = -0.03; g.add(palm);
-  const fingers = [];
-  for (let i = 0; i < 4; i++) {
-    const pv = new THREE.Group(); pv.position.set(-0.03 + i * 0.02, 0, -0.078); g.add(pv);
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.018, 0.075 - Math.abs(i - 1.5) * 0.008), skinMat); f.position.z = -0.035; pv.add(f);
-    fingers.push(pv);
+
+// textures: skin with faint mottling and pores, a darker crease band at the joints; coarse wool for the coat
+T.skin = canvasTex(128, 128, (g, w, h) => {
+  g.fillStyle = '#d8ab90'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 26; i++) {
+    const x = rnd() * w, y = rnd() * h, r = 6 + rnd() * 18, gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, rnd() > 0.5 ? 'rgba(190,110,90,.18)' : 'rgba(240,210,190,.16)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
   }
-  const thumb = new THREE.Group(); thumb.position.set(side * -0.045, -0.005, -0.02); thumb.rotation.y = side * -0.6; g.add(thumb);
-  const tm = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.06), skinMat); tm.position.z = -0.03; thumb.add(tm);
-  g.userData = { fingers, thumb };
+  g.fillStyle = 'rgba(120,70,55,.10)'; for (let i = 0; i < 260; i++) g.fillRect(rnd() * w, rnd() * h, 1, 1);
+  g.fillStyle = 'rgba(120,75,60,.16)'; g.fillRect(0, 0, w, 3); g.fillRect(0, h - 3, w, 3);
+});
+T.wool = canvasTex(128, 128, (g, w, h) => {
+  g.fillStyle = '#2a2622'; g.fillRect(0, 0, w, h);
+  for (let y = 0; y < h; y += 4) for (let x = 0; x < w; x += 4) { g.fillStyle = ((x + y) / 4) % 2 ? 'rgba(255,240,220,.05)' : 'rgba(0,0,0,.18)'; g.fillRect(x, y, 4, 2); }
+  stains(g, w, h, 3, '10,8,6');
+});
+const skinMat = surface(T.skin, 1, 1, { color: 0x9c7c6c, roughness: 0.62, bumpScale: 0.012 });
+const nailMat = new THREE.MeshStandardMaterial({ color: 0xc9a594, roughness: 0.25 });
+const sleeveMat = surface(T.wool, 2, 2, { roughness: 1, bumpScale: 0.04 });
+const cuffMat = surface(T.wool, 3, 1, { roughness: 1, color: 0x8a8070, bumpScale: 0.04 });
+
+// a capsule turned on a lathe: joint at y = 0, next joint at y = len, radius tapering r0 → r1
+function capsuleGeo(r0, r1, len, seg = 10) {
+  const key = `cap${r0}|${r1}|${len}|${seg}`;
+  let g = geoCache.get(key);
+  if (!g) {
+    const pts = [];
+    for (let i = 0; i <= 5; i++) { const a = -Math.PI / 2 + i / 5 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0 + 1e-4, Math.sin(a) * r0)); }
+    for (let i = 0; i <= 5; i++) { const a = i / 5 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1 + 1e-4, len + Math.sin(a) * r1)); }
+    g = new THREE.LatheGeometry(pts, seg); geoCache.set(key, g);
+  }
+  return g;
+}
+// one bone of a finger: a pivot (the joint) holding a capsule that points along -z
+function phalanx(parent, r0, r1, len) {
+  const joint = new THREE.Group(); parent.add(joint);
+  const m = new THREE.Mesh(capsuleGeo(r0, r1, len), skinMat); m.rotation.x = -Math.PI / 2; joint.add(m);
+  return joint;
+}
+// side: +1 right hand, -1 left. Fingers point -z, the back of the hand faces +y (towards the camera)
+const FINGERS = [   // [x offset from the hand centre (thumb side negative), [proximal, middle, distal] lengths, radius]
+  [-0.029, [0.044, 0.026, 0.021], 0.0088],
+  [-0.009, [0.049, 0.030, 0.022], 0.0092],
+  [0.011, [0.046, 0.028, 0.021], 0.0086],
+  [0.029, [0.036, 0.021, 0.018], 0.0076],
+];
+function makeHand(side) {
+  const g = new THREE.Group(), fingers = [];
+  // forearm, wrist and the coat sleeve with its cuff
+  const fore = new THREE.Mesh(capsuleGeo(0.026, 0.034, 0.26, 14), skinMat); fore.rotation.x = Math.PI / 2; fore.position.z = 0.03; fore.scale.set(1.25, 1, 0.8); g.add(fore);
+  const sleeve = new THREE.Mesh(cyl(0.044, 0.05, 0.36, 18), sleeveMat); sleeve.rotation.x = Math.PI / 2; sleeve.position.z = 0.3; sleeve.scale.set(1.05, 1, 0.82); g.add(sleeve);
+  const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.009, 8, 20), cuffMat); cuff.position.z = 0.12; cuff.scale.set(1.05, 0.82, 1); g.add(cuff);
+  // palm: a soft pillow, with the heel of the hand and the knuckles as bumps
+  const palm = new THREE.Mesh(rbox(0.082, 0.026, 0.092, 0.012), skinMat); palm.position.set(0, 0, -0.03); g.add(palm);
+  const heel = new THREE.Mesh(new THREE.SphereGeometry(0.03, 14, 10), skinMat); heel.scale.set(1.35, 0.55, 1); heel.position.set(side * 0.006, -0.004, 0.005); g.add(heel);
+  for (const [x, , r] of FINGERS) {
+    const k = new THREE.Mesh(new THREE.SphereGeometry(r * 1.15, 10, 8), skinMat); k.position.set(side * x, 0.006, -0.072); g.add(k);
+  }
+  // four fingers, three bones each, a nail on the last one
+  FINGERS.forEach(([x, lens, r], i) => {
+    const base = new THREE.Group(); base.position.set(side * x, 0.002, -0.074); base.rotation.y = side * (i - 1.5) * 0.06; g.add(base);
+    const j0 = phalanx(base, r, r * 0.93, lens[0]);
+    const j1 = phalanx(j0, r * 0.93, r * 0.86, lens[1]); j1.position.z = -lens[0];
+    const j2 = phalanx(j1, r * 0.86, r * 0.78, lens[2]); j2.position.z = -lens[1];
+    const nail = new THREE.Mesh(rbox(r * 1.45, 0.0025, r * 1.7, 0.0012), nailMat); nail.position.set(0, r * 0.8, -lens[2] * 0.62); j2.add(nail);
+    fingers.push([base, j0, j1, j2]);
+  });
+  // thumb: set on the side of the palm, turned out and down
+  const tb = new THREE.Group(); tb.position.set(side * -0.036, -0.006, -0.006); tb.rotation.set(-0.25, side * 0.75, side * 0.5); g.add(tb);
+  const t0 = phalanx(tb, 0.0125, 0.0112, 0.034);
+  const t1 = phalanx(t0, 0.0112, 0.0102, 0.03); t1.position.z = -0.034;
+  const t2 = phalanx(t1, 0.0102, 0.0092, 0.024); t2.position.z = -0.03;
+  const tn = new THREE.Mesh(rbox(0.014, 0.0025, 0.016, 0.0012), nailMat); tn.position.set(0, 0.0085, -0.016); t2.add(tn);
+  g.userData = { fingers, thumb: [t0, t1, t2] };
   handRoot.add(g); return g;
 }
-function curl(h, a) { for (const f of h.userData.fingers) f.rotation.x = -a; h.userData.thumb.rotation.x = -a * 0.5; }
+// a = 0 open hand … 1.5 fist; each joint bends by its own share, the thumb folds less
+function curl(h, a) {
+  for (const [, j0, j1, j2] of h.userData.fingers) { j0.rotation.x = -a * 0.85; j1.rotation.x = -a * 1.05; j2.rotation.x = -a * 0.7; }
+  const [t0, t1, t2] = h.userData.thumb; t0.rotation.x = -a * 0.25; t1.rotation.x = -a * 0.45; t2.rotation.x = -a * 0.55;
+}
 const handR = makeHand(1), handL = makeHand(-1);
-curl(handR, 1.35);
+curl(handR, 1.25);
 const torchMat = new THREE.MeshStandardMaterial({ color: 0x1d1f22, metalness: 0.6, roughness: 0.4 });
-const torch = new THREE.Group(); torch.position.set(0, -0.035, -0.06); handR.add(torch);
+const torch = new THREE.Group(); torch.position.set(0.002, -0.03, -0.095); handR.add(torch);
 const torchBody = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 12), torchMat); torchBody.rotation.x = Math.PI / 2; torch.add(torchBody);
 const torchHead = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.022, 0.05, 12), torchMat); torchHead.rotation.x = Math.PI / 2; torchHead.position.z = -0.12; torch.add(torchHead);
 const HAND_REST_L = new THREE.Vector3(-0.32, -0.62, -0.35), HAND_REACH = new THREE.Vector3(-0.07, -0.15, -0.56), HAND_KNOCK = new THREE.Vector3(-0.05, -0.1, -0.5);
@@ -1014,14 +1077,14 @@ function updateHands(dt) {
   const bx = Math.sin(bob * 0.5) * 0.012, by = Math.abs(Math.cos(bob * 0.5)) * 0.012;
   handR.visible = !S.flashLost;
   handR.position.set(0.24 + bx, -0.25 - by, -0.42); handR.rotation.set(0.06, 0.08, 0);
-  handLamp.intensity = flashLit() ? 0.3 : 0.03;
-  let k = 0, c = 0.2, rap = 0;
+  handLamp.intensity = flashLit() ? 0.35 : 0.04;
+  let k = 0, c = 0.15, rap = 0;
   if (HA.kind) {
     HA.t += dt;
     if (HA.kind === 'grab') {
       const u = HA.t / 0.75;
       k = Math.sin(Math.min(1, u) * Math.PI);
-      c = u > 0.42 ? 1.3 : 0.2;
+      c = 0.15 + 1.1 * Math.min(1, Math.max(0, (u - 0.3) / 0.15));   // fingers close as the hand arrives
       if (!HA.fired && u >= 0.42) { HA.fired = true; HA.cb(); }
       if (u >= 1) HA.kind = null;
     } else {
