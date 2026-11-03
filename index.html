@@ -969,6 +969,49 @@ const beam = (() => {
   };
 })();
 
+/* ================= core: ghost sprite ================= */
+// A photo on black (embedded as <script id="ghost-sprite" type="image/jpeg">) or a canvas with alpha.
+// The shader keys the black out, sways the mist at the feet, flickers, and tears into glitch bands on demand.
+let ghostPhotoTex;
+function ghostSpriteTexture() {
+  if (ghostPhotoTex !== undefined) return ghostPhotoTex;
+  const el = document.getElementById('ghost-sprite');
+  if (!el) return (ghostPhotoTex = null);
+  const img = new Image(), tex = new THREE.Texture(img);
+  img.onload = () => { tex.needsUpdate = true; };
+  img.src = 'data:image/jpeg;base64,' + el.textContent.trim();
+  return (ghostPhotoTex = tex);
+}
+function makeGhostMaterial(map, keyBlack) {
+  return new THREE.ShaderMaterial({
+    uniforms: { map: { value: map }, uTime: { value: 0 }, uOpacity: { value: 0 }, uGlitch: { value: 0 }, uBright: { value: 1.1 }, uKey: { value: keyBlack ? 1 : 0 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `
+      uniform sampler2D map; uniform float uTime, uOpacity, uGlitch, uBright, uKey; varying vec2 vUv;
+      float hash(float n) { return fract(sin(n) * 43758.5453); }
+      void main() {
+        vec2 uv = vUv;
+        float low = 1.0 - smoothstep(0.0, 0.45, uv.y);                       // the misty lower half
+        uv.x += sin(uv.y * 18.0 + uTime * 2.3) * 0.012 * low + sin(uv.y * 6.0 - uTime * 1.1) * 0.004;
+        float t = floor(uTime * 18.0), band = floor(uv.y * 42.0);
+        float tear = step(1.0 - uGlitch * 0.55, hash(band * 1.31 + t));      // horizontal tears
+        uv.x += (hash(band * 7.7 + t) - 0.5) * 0.09 * tear * uGlitch;
+        float split = 0.004 + 0.008 * uGlitch;
+        vec4 tx = texture2D(map, uv);
+        vec3 c = vec3(texture2D(map, uv + vec2(split, 0.0)).r, tx.g, texture2D(map, uv - vec2(split, 0.0)).b);
+        c = pow(c, vec3(2.2));                                              // sRGB photo → linear for the HDR chain
+        float lum = max(c.r, max(c.g, c.b));
+        float a = mix(tx.a, smoothstep(0.0012, 0.02, lum), uKey);           // black background becomes transparent
+        float n = hash(floor(uv.x * 70.0) + floor(uv.y * 90.0) * 13.0 + floor(uTime * 9.0));
+        a *= mix(1.0, smoothstep(0.0, 0.22, uv.y) * (0.55 + 0.45 * n), low); // feet dissolve into moving mist
+        a *= smoothstep(0.0, 0.05, vUv.x) * smoothstep(1.0, 0.95, vUv.x) * smoothstep(1.0, 0.97, vUv.y);
+        float flick = 0.86 + 0.14 * sin(uTime * 37.0) * sin(uTime * 13.0);
+        gl_FragColor = vec4(c * uBright * (1.0 + tear * 0.6), clamp(a * uOpacity * flick, 0.0, 1.0));
+      }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+}
+
 /* ================= core: hands (own scene, drawn over the world) ================= */
 const handScene = new THREE.Scene();
 const handRoot = new THREE.Group(); handScene.add(handRoot);
@@ -1283,6 +1326,9 @@ function buildLobby() {
   }, false), transparent: true, alphaTest: 0.35, side: THREE.DoubleSide, fog: false });
   const figure = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 1.85), figMat);
   figure.visible = false; scene.add(figure);
+  // with the photo sprite embedded, the corridor figure is the operator herself instead of a silhouette
+  const ghostPhoto = ghostSpriteTexture();
+  if (ghostPhoto) { figure.geometry = new THREE.PlaneGeometry(1.26, 1.88); figure.material = makeGhostMaterial(ghostPhoto, true); figure.material.uniforms.uBright.value = 0.8; }
 
   // the operator's ghost, woken by the desk bell
   const ghost = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.9), new THREE.MeshBasicMaterial({ map: canvasTex(128, 224, (g) => {
@@ -1296,6 +1342,15 @@ function buildLobby() {
     g.strokeStyle = 'rgba(30,40,60,.7)'; g.lineWidth = 3; g.beginPath(); g.arc(64, 44, 34, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
   }, false), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, fog: false }));
   ghost.visible = false; scene.add(ghost);
+  ghost.material = ghostPhoto ? makeGhostMaterial(ghostPhoto, true) : makeGhostMaterial(ghost.material.map, false);
+  if (ghostPhoto) ghost.geometry = new THREE.PlaneGeometry(1.2, 1.8);
+  // afterimages that trail behind her when she flies off
+  const trail = [0, 1, 2].map(() => {
+    const m = new THREE.Mesh(ghost.geometry, ghostPhoto ? makeGhostMaterial(ghostPhoto, true) : makeGhostMaterial(ghost.material.uniforms.map.value, false));
+    m.visible = false; scene.add(m); return m;
+  });
+  const trailPos = Array.from({ length: 24 }, () => new THREE.Vector3());
+  let trailHead = 0;
   const gh = { t: -1 };
   const ghostPath = [new THREE.Vector3(1.2, 1.75, -4.6), new THREE.Vector3(-3, 3.6, -2), new THREE.Vector3(-7.5, 3.2, 0.5), new THREE.Vector3(-9.5, 7, 0.5)];
   const ghostCurve = new THREE.CubicBezierCurve3(...ghostPath);
@@ -1409,15 +1464,21 @@ function buildLobby() {
     later(1.5, () => { S.flags.linenOpen = true; linenDoor.target = 1.1; SND.creak(at(16.5, 1.2, 1.3, sfx, 2), 0.3, 2.2); sub('В коридоре открылась дверь.', 3.5); });
     later(3.5, () => showFigure(16.9, 16));
   }
-  function showFigure(x, life) { Object.assign(fig, { active: true, x, watch: 0, life: 0, maxLife: life }); figure.visible = true; figure.position.set(x, 0.93, 0); }
+  function showFigure(x, life) {
+    Object.assign(fig, { active: true, x, watch: 0, life: 0, maxLife: life, fade: 0 });
+    figure.visible = true; figure.position.set(x, 0.93, 0);
+    if (figure.material.uniforms) { figure.material.uniforms.uOpacity.value = 0; figure.material.uniforms.uGlitch.value = 1; }
+  }
+  // the photo sprite tears apart over 0.4 s; the plain silhouette just disappears
+  const hideFigure = () => { if (figure.material.uniforms) fig.fade = 0.4; else figure.visible = false; };
   function vanish(seen) {
     if (!fig.active) return;
-    fig.active = false; figure.visible = false; flicker(0.5);
+    fig.active = false; hideFigure(); flicker(0.5);
     if (!seen) SND.slam(at(fig.x, 1.2, 1.2, sfx, 2));
     afterFigure();
   }
   function encounter() {
-    fig.active = false; figure.visible = false;
+    fig.active = false; hideFigure();
     blackout(2.2); S.activity += 2; S.flags.encounter = true;
     SND.whisper(nearEar(-1), 1.4, 0.5); sub('«…тише…»', 3);
     later(2.4, afterFigure);
@@ -1462,6 +1523,19 @@ function buildLobby() {
         sub('Наверху кто-то пробежал вслед за вами.', 4);
       }
       // the figure: reacts to sound, fades under a steady gaze
+      // the photo sprite hovers, breathes and glitches now and then; on vanishing it tears apart
+      const fu = figure.material.uniforms;
+      if (fu && figure.visible) {
+        fu.uTime.value = S.t;
+        figure.position.y = 0.95 + Math.sin(S.t * 1.4) * 0.03;
+        if (fig.fade > 0) {
+          fig.fade -= dt; fu.uOpacity.value = Math.max(0, fig.fade / 0.4); fu.uGlitch.value = 1;
+          if (fig.fade <= 0) figure.visible = false;
+        } else if (fig.active) {
+          fu.uOpacity.value = Math.min(0.9, fu.uOpacity.value + dt * 3);
+          fu.uGlitch.value = Math.random() < 0.02 ? 0.8 : fu.uGlitch.value * 0.85;
+        }
+      }
       if (fig.active) {
         figure.position.x = fig.x;
         figure.lookAt(p.x, figure.position.y, p.z);
@@ -1480,20 +1554,36 @@ function buildLobby() {
       // the ghost: screams from behind the desk, then flies up the stairwell
       if (gh.t >= 0) {
         gh.t += dt;
-        let op;
+        const u = ghost.material.uniforms;
+        let op, glitch, flying = false;
         if (gh.t < 1.3) {
-          op = Math.min(0.8, gh.t / 0.15) * (0.85 + Math.random() * 0.15);
-          ghost.position.copy(ghostPath[0]).add(tmp.set((Math.random() - 0.5) * 0.04, (Math.random() - 0.5) * 0.04, 0));
-          ghost.scale.setScalar(1 + Math.sin(gh.t * 40) * 0.06 + gh.t * 0.15);
+          // appears in a burst of tearing, then screams: shudders, swells, the image keeps breaking up
+          op = Math.min(1, gh.t / 0.12);
+          glitch = gh.t < 0.2 ? 1 - gh.t * 3 : 0.25 + (Math.random() < 0.12 ? 0.7 : 0);
+          ghost.position.copy(ghostPath[0]).add(tmp.set((Math.random() - 0.5) * 0.035, (Math.random() - 0.5) * 0.035 + Math.sin(gh.t * 6) * 0.02, 0));
+          ghost.scale.set(1 + Math.sin(gh.t * 40) * 0.04 + gh.t * 0.12, 1 + Math.sin(gh.t * 40 + 1) * 0.04 + gh.t * 0.12, 1);
         } else {
+          // flies to the stairwell: stretched by the speed, leaning into the turn, afterimages behind
+          flying = true;
           const k = Math.min(1, (gh.t - 1.3) / 2.2), e = k * k * (3 - 2 * k);
           ghostCurve.getPoint(e, ghost.position);
-          ghost.scale.setScalar(1.2 - k * 0.4);
-          op = 0.8 * (k > 0.75 ? (1 - k) / 0.25 : 1);
-          if (k >= 1) { gh.t = -1; ghost.visible = false; op = 0; }
+          const speed = 6 * k * (1 - k);
+          ghost.scale.set(1.15 - k * 0.35 - speed * 0.12, 1.15 - k * 0.35 + speed * 0.25, 1);
+          op = k > 0.75 ? (1 - k) / 0.25 : 1;
+          glitch = 0.15 + speed * 0.25;
+            if (k >= 1) { gh.t = -1; ghost.visible = false; op = 0; flying = false; for (const m of trail) m.visible = false; }
         }
-        ghost.material.opacity = op;
+        u.uTime.value = S.t; u.uOpacity.value = op * 0.92; u.uGlitch.value = glitch;
         ghost.lookAt(p.x, ghost.position.y, p.z);
+        ghost.rotateZ(flying ? -0.25 : 0);
+        trailHead = (trailHead + 1) % trailPos.length; trailPos[trailHead].copy(ghost.position);
+        trail.forEach((m, i) => {
+          m.visible = flying && op > 0;
+          if (!m.visible) return;
+          m.position.copy(trailPos[(trailHead - (i + 1) * 4 + trailPos.length * 4) % trailPos.length]);
+          m.scale.copy(ghost.scale); m.quaternion.copy(ghost.quaternion);
+          const tu = m.material.uniforms; tu.uTime.value = S.t - (i + 1) * 0.07; tu.uOpacity.value = op * 0.32 / (i + 1); tu.uGlitch.value = glitch;
+        });
         ghostLight.base = 1.6 * op; ghostLight.l.position.copy(ghost.position);
       }
       if (S.flags.board && st.boardT < 1) { st.boardT = Math.min(1, st.boardT + dt * 1.6); const pl = planks[1]; pl.rotation.x = -0.05 + st.boardT * 1.45; pl.position.y = 1.35 - st.boardT * 1.24; pl.position.x = -6.92 + st.boardT * 0.25; }
